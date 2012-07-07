@@ -32,14 +32,19 @@ func main() {
 		http.Redirect(w, r, fmt.Sprintf("https://%s:%d", r.Host, *httpsPort), http.StatusMovedPermanently)
 	})
 	log.Printf("Binding HTTP to %s", httpAddr)
-	go http.ListenAndServe(httpAddr, httpr)
+	go func() {
+		e := http.ListenAndServe(httpAddr, httpr)
+		if e != nil {
+			log.Fatalf("Could not bind HTTP server: %s", e)
+		}
+	}()
 
 	httpsr := mux.NewRouter()
-	httpsr.PathPrefix("/").HandlerFunc(handler)
+	httpsr.PathPrefix("/").HandlerFunc(appHandler)
 	log.Printf("Binding HTTPS to %s", httpsAddr)
 	e := http.ListenAndServeTLS(httpsAddr, "cert.pem", "key.pem", httpsr)
 	if e != nil {
-		log.Fatalf("Could not start webserver: %s", e)
+		log.Fatalf("Could not bind HTTPS server: %s", e)
 	}
 }
 
@@ -47,7 +52,7 @@ var (
 	backends = map[string]string{}
 )
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func appHandler(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(r.Host, *domainSuffix) {
 		http.Error(w, "Invalid domain", 404)
 		return
