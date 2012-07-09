@@ -4,7 +4,9 @@ import (
 	"code.google.com/p/gorilla/mux"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 )
@@ -49,8 +51,16 @@ func main() {
 }
 
 var (
-	backends = map[string]string{}
+	backends = map[string]*net.TCPAddr{}
 )
+
+func init() {
+	var e error
+	backends["testapp"], e = net.ResolveTCPAddr("tcp4", "localhost:9001")
+	if e != nil {
+		log.Fatalf("Invalid app address: %s", e)
+	}
+}
 
 func appHandler(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasSuffix(r.Host, *domainSuffix) {
@@ -59,10 +69,30 @@ func appHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	// Strip domain suffix + dot
 	appname := r.Host[0 : len(r.Host)-len(*domainSuffix)-1]
-	_, ok := backends[appname]
+	backend, ok := backends[appname]
 	if !ok {
 		http.Error(w, "Unknown app name", 404)
 		return
 	}
-	fmt.Fprintf(w, "Bla")
+	ccon, _, e := w.(http.Hijacker).Hijack()
+	if e != nil {
+		http.Error(w, "Hijacking failed", 500)
+		return
+	}
+	defer ccon.Close()
+
+	bcon, e := net.DialTCP("tcp4", nil, backend)
+	if e != nil {
+		log.Printf("Backend not reachable: %s", e)
+		return
+	}
+	defer bcon.Close()
+
+	r.Header.Add("X-Forwarded-For", r.RemoteAddr)
+	log.Printf("Forwarding request from %s to %s", r.RemoteAddr, backend)
+	r.Write(bcon)
+
+	log.Printf("Waiting for answer...")
+	io.Copy(ccon, bcon)
+	log.Printf("Done")
 }
