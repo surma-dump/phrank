@@ -1,0 +1,5 @@
+{
+	"Name": "app1",
+	"AddForwardHeader": true,
+	"Address": "localhost:9001"
+}
