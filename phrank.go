@@ -20,7 +20,7 @@ var (
 	httpPort     = flag.Int("http", 80, "Port to bind HTTP server to")
 	httpsPort    = flag.Int("https", 443, "Port to bind HTTP server to")
 	domainSuffix = flag.String("domain", "", "Domain-suffix for apps")
-	configDir    = flag.String("config", "gaas.d", "Location of the config directory")
+	configDir    = flag.String("config", "phrank.d", "Location of the config directory")
 	help         = flag.Bool("h", false, "Show this help")
 )
 
