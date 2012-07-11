@@ -44,24 +44,20 @@ func main() {
 	httpAddr := fmt.Sprintf("0.0.0.0:%d", *httpPort)
 	httpsAddr := fmt.Sprintf("0.0.0.0:%d", *httpsPort)
 
-	httpr := mux.NewRouter()
-	httpr.PathPrefix("/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, fmt.Sprintf("https://%s:%d", r.Host, *httpsPort), http.StatusMovedPermanently)
-	})
-	log.Printf("Binding HTTP to %s", httpAddr)
+	router := mux.NewRouter()
+	router.PathPrefix("/").HandlerFunc(appHandler)
+	log.Printf("Binding HTTPS to %s", httpsAddr)
 	go func() {
-		e := http.ListenAndServe(httpAddr, httpr)
+		e := http.ListenAndServeTLS(httpsAddr, "cert.pem", "key.pem", router)
 		if e != nil {
-			log.Fatalf("Could not bind HTTP server: %s", e)
+			log.Fatalf("Could not bind HTTPS server: %s", e)
 		}
 	}()
 
-	httpsr := mux.NewRouter()
-	httpsr.PathPrefix("/").HandlerFunc(appHandler)
-	log.Printf("Binding HTTPS to %s", httpsAddr)
-	e := http.ListenAndServeTLS(httpsAddr, "cert.pem", "key.pem", httpsr)
+	log.Printf("Binding HTTP to %s", httpAddr)
+	e := http.ListenAndServe(httpAddr, router)
 	if e != nil {
-		log.Fatalf("Could not bind HTTPS server: %s", e)
+		log.Fatalf("Could not bind HTTP server: %s", e)
 	}
 }
 
