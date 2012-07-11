@@ -43,9 +43,9 @@ func main() {
 	router.PathPrefix("/").HandlerFunc(appHandler)
 	log.Printf("Binding HTTPS to %s", *httpsAddr)
 	go func() {
-		e := http.ListenAndServeTLS(*httpsAddr, "cert.pem", "key.pem", router)
+		e := http.ListenAndServeTLS(*httpsAddr, *configDir+"/cert.pem", *configDir+"/key.pem", router)
 		if e != nil {
-			log.Fatalf("Could not bind HTTPS server: %s", e)
+			log.Printf("Could not bind HTTPS server: %s", e)
 		}
 	}()
 
@@ -69,15 +69,16 @@ type Backend struct {
 func readConfig() {
 	log.Printf("Reading configuration files...")
 	newBackends := map[string]Backend{}
-	filepath.Walk(*configDir, func(path string, info os.FileInfo, e error) error {
+	root := *configDir+"/apps"
+	filepath.Walk(root, func(path string, info os.FileInfo, e error) error {
 		if e != nil {
 			log.Printf("Error: %s: %s", path, e)
 			return nil
 		}
-		if info.IsDir() && path != *configDir {
+		if info.IsDir() && path != root {
 			return filepath.SkipDir
 		}
-		if !strings.HasSuffix(path, ".conf") {
+		if !strings.HasSuffix(path, ".app") {
 			return nil
 		}
 		log.Printf("Reading %s...", path)
