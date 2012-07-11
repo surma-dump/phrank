@@ -1,4 +1,3 @@
-/Procfile
-/key.pem
-/cert.pem
-/gaas
+/phrank.d/key.pem
+/phrank.d/cert.pem
+/phrank
