@@ -5,7 +5,6 @@ import (
 	"code.google.com/p/gorilla/mux"
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -17,17 +16,16 @@ import (
 )
 
 var (
-	httpPort     = flag.Int("http", 80, "Port to bind HTTP server to")
-	httpsPort    = flag.Int("https", 443, "Port to bind HTTP server to")
-	domainSuffix = flag.String("domain", "", "Domain-suffix for apps")
-	configDir    = flag.String("config", "phrank.d", "Location of the config directory")
-	help         = flag.Bool("h", false, "Show this help")
+	httpAddr  = flag.String("http", ":80", "Address to bind HTTP server to")
+	httpsAddr = flag.String("https", ":443", "Address to bind HTTP server to")
+	configDir = flag.String("config", "phrank.d", "Location of the config directory")
+	help      = flag.Bool("h", false, "Show this help")
 )
 
 func main() {
 	flag.Parse()
 
-	if *help || *domainSuffix == "" {
+	if *help {
 		flag.PrintDefaults()
 		return
 	}
@@ -41,21 +39,18 @@ func main() {
 	}()
 	readConfig()
 
-	httpAddr := fmt.Sprintf("0.0.0.0:%d", *httpPort)
-	httpsAddr := fmt.Sprintf("0.0.0.0:%d", *httpsPort)
-
 	router := mux.NewRouter()
 	router.PathPrefix("/").HandlerFunc(appHandler)
-	log.Printf("Binding HTTPS to %s", httpsAddr)
+	log.Printf("Binding HTTPS to %s", *httpsAddr)
 	go func() {
-		e := http.ListenAndServeTLS(httpsAddr, "cert.pem", "key.pem", router)
+		e := http.ListenAndServeTLS(*httpsAddr, "cert.pem", "key.pem", router)
 		if e != nil {
 			log.Fatalf("Could not bind HTTPS server: %s", e)
 		}
 	}()
 
-	log.Printf("Binding HTTP to %s", httpAddr)
-	e := http.ListenAndServe(httpAddr, router)
+	log.Printf("Binding HTTP to %s", *httpAddr)
+	e := http.ListenAndServe(*httpAddr, router)
 	if e != nil {
 		log.Fatalf("Could not bind HTTP server: %s", e)
 	}
@@ -66,7 +61,7 @@ var (
 )
 
 type Backend struct {
-	Name             string
+	Domain           string
 	AddForwardHeader bool
 	Address          string
 }
@@ -99,7 +94,7 @@ func readConfig() {
 			log.Printf("Could not parse file %s: %s", path, e)
 			return nil
 		}
-		newBackends[strings.ToLower(b.Name)] = b
+		newBackends[strings.ToLower(b.Domain)] = b
 		return nil
 	})
 	backends = newBackends
@@ -107,15 +102,9 @@ func readConfig() {
 }
 
 func appHandler(w http.ResponseWriter, r *http.Request) {
-	if !strings.HasSuffix(r.Host, *domainSuffix) {
-		http.Error(w, "Invalid domain", 404)
-		return
-	}
-	// Strip domain suffix + leading dot
-	appname := r.Host[0 : len(r.Host)-len(*domainSuffix)-1]
-	backend, ok := backends[appname]
+	backend, ok := backends[r.Host]
 	if !ok {
-		http.Error(w, "Unknown app name", 404)
+		http.Error(w, "Invalid domain", 404)
 		return
 	}
 

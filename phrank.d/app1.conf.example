@@ -1,5 +1,5 @@
 {
-	"Name": "app1",
+	"Domain": "app.domain.com",
 	"AddForwardHeader": true,
 	"Address": "localhost:9001"
 }
