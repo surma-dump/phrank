@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"code.google.com/p/gorilla/mux"
 	"encoding/json"
 	"flag"
 	"log"
@@ -39,18 +38,16 @@ func main() {
 	}()
 	readConfig()
 
-	router := mux.NewRouter()
-	router.PathPrefix("/").HandlerFunc(appHandler)
 	log.Printf("Binding HTTPS to %s", *httpsAddr)
 	go func() {
-		e := http.ListenAndServeTLS(*httpsAddr, *configDir+"/cert.pem", *configDir+"/key.pem", router)
+		e := http.ListenAndServeTLS(*httpsAddr, *configDir+"/cert.pem", *configDir+"/key.pem", http.HandlerFunc(appHandler))
 		if e != nil {
 			log.Printf("Could not bind HTTPS server: %s", e)
 		}
 	}()
 
 	log.Printf("Binding HTTP to %s", *httpAddr)
-	e := http.ListenAndServe(*httpAddr, router)
+	e := http.ListenAndServe(*httpAddr, http.HandlerFunc(appHandler))
 	if e != nil {
 		log.Fatalf("Could not bind HTTP server: %s", e)
 	}
@@ -69,7 +66,7 @@ type Backend struct {
 func readConfig() {
 	log.Printf("Reading configuration files...")
 	newBackends := map[string]Backend{}
-	root := *configDir+"/apps"
+	root := *configDir + "/apps"
 	filepath.Walk(root, func(path string, info os.FileInfo, e error) error {
 		if e != nil {
 			log.Printf("Error: %s: %s", path, e)
