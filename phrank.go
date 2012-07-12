@@ -103,7 +103,7 @@ func readConfig() {
 }
 
 func appHandler(w http.ResponseWriter, r *http.Request) {
-	backend, ok := backends[r.Host]
+	backend, ok := backends[strings.ToLower(r.Host)]
 	if !ok {
 		http.Error(w, "Invalid domain", 404)
 		return
