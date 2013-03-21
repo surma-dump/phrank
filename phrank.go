@@ -37,6 +37,8 @@ func main() {
 		switch m.Ressource.Scheme {
 		case "http", "https":
 			h = kartoffelsack.NewSingleHostReverseProxy(m.Ressource)
+		case "file":
+			h = http.FileServer(http.Dir(m.Ressource.Path))
 		default:
 			log.Fatalf("Unknown scheme: %s", m.Ressource.Scheme)
 		}
