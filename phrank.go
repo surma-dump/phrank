@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"launchpad.net/goamz/aws"
 	"launchpad.net/goamz/s3"
@@ -18,11 +19,13 @@ import (
 
 var (
 	options = struct {
-		Listen string        `goptions:"-l, --listen, description='Address to bind webserver to'"`
-		Maps   []*Map        `goptions:"-m, --map, description='Map a path to a ressource', obligatory"`
-		Help   goptions.Help `goptions:"-h, --help, description='Show this help'"`
+		Listen        string        `goptions:"-l, --listen, description='Address to bind webserver to'"`
+		CacheDuration time.Duration `goptions:"-c, --cache-duration, description='Duration to cache static content'"`
+		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a ressource', obligatory"`
+		Help          goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	}{
-		Listen: fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
+		Listen:        fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
+		CacheDuration: 5 * time.Minute,
 	}
 )
 
@@ -46,6 +49,7 @@ func main() {
 			h = kartoffelsack.NewSingleHostReverseProxy(m.Ressource)
 		case "file":
 			h = http.FileServer(http.Dir(m.Ressource.Path))
+			h = kartoffelsack.NewCache(options.CacheDuration, h)
 		case "s3":
 			username := m.Ressource.User.Username()
 			password, _ := m.Ressource.User.Password()
@@ -59,6 +63,7 @@ func main() {
 			}
 			s3acc := s3.New(auth, region)
 			h = &S3HTTP{s3acc.Bucket(m.Ressource.Path)}
+			h = kartoffelsack.NewCache(options.CacheDuration, h)
 		default:
 			log.Fatalf("Unknown scheme: %s", m.Ressource.Scheme)
 		}
@@ -108,11 +113,21 @@ type S3HTTP struct {
 }
 
 func (s *S3HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	f, err := s.Bucket.GetReader(r.URL.Path)
+	key := r.URL.Path
+	resp, err := s.Bucket.List(key, "", "", 2)
 	if err != nil {
+		log.Printf("Could not list bucket %s: %s", s.Bucket.Name, err)
 		http.NotFound(w, r)
 		return
 	}
+	if len(resp.Contents) != 1 {
+		http.NotFound(w, r)
+		return
+	}
+
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.Contents[0].Size))
+	w.Header().Set("ETag", resp.Contents[0].ETag)
+	f, _ := s.Bucket.GetReader(key)
 	defer f.Close()
 
 	io.Copy(w, f)
