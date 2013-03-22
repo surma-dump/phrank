@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 	"launchpad.net/goamz/s3"
 
 	"github.com/voxelbrain/goptions"
-	"github.com/voxelbrain/kartoffelsack"
+	"github.com/voxelbrain/katalysator"
 )
 
 var (
@@ -46,13 +47,19 @@ func main() {
 		var h http.Handler
 		switch m.Ressource.Scheme {
 		case "http", "https":
-			h = kartoffelsack.NewSingleHostReverseProxy(m.Ressource)
+			h = katalysator.NewSingleHostReverseProxy(m.Ressource)
 		case "file":
 			h = http.FileServer(http.Dir(m.Ressource.Path))
-			h = kartoffelsack.NewCache(options.CacheDuration, h)
+			h = katalysator.NewCache(options.CacheDuration, h)
 		case "s3":
 			username := m.Ressource.User.Username()
 			password, _ := m.Ressource.User.Password()
+			elems := strings.Split(strings.TrimLeft(m.Ressource.Path, "/"), "/")
+			bucketname := elems[0]
+			prefix := "/"
+			if len(elems) > 1 {
+				prefix += path.Join(elems[1:]...)
+			}
 			region, err := regionByEndpoint(m.Ressource.Host)
 			if err != nil {
 				log.Fatalf("Could not connect to S3: %s", err)
@@ -62,8 +69,11 @@ func main() {
 				SecretKey: password,
 			}
 			s3acc := s3.New(auth, region)
-			h = &S3HTTP{s3acc.Bucket(m.Ressource.Path)}
-			h = kartoffelsack.NewCache(options.CacheDuration, h)
+			h = &S3HTTP{
+				Bucket: s3acc.Bucket(bucketname),
+				Prefix: prefix,
+			}
+			h = katalysator.NewCache(options.CacheDuration, h)
 		default:
 			log.Fatalf("Unknown scheme: %s", m.Ressource.Scheme)
 		}
@@ -110,10 +120,11 @@ func (m *Map) MarshalGoption(v string) error {
 
 type S3HTTP struct {
 	Bucket *s3.Bucket
+	Prefix string
 }
 
 func (s *S3HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	key := r.URL.Path
+	key := path.Join(s.Prefix, r.URL.Path)[1:]
 	resp, err := s.Bucket.List(key, "", "", 2)
 	if err != nil {
 		log.Printf("Could not list bucket %s: %s", s.Bucket.Name, err)
