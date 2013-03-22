@@ -25,8 +25,7 @@ var (
 		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a ressource', obligatory"`
 		Help          goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	}{
-		Listen:        fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
-		CacheDuration: 5 * time.Minute,
+		Listen: fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
 	}
 )
 
@@ -52,25 +51,12 @@ func main() {
 			h = http.FileServer(http.Dir(m.Ressource.Path))
 			h = katalysator.NewCache(options.CacheDuration, h)
 		case "s3":
-			username := m.Ressource.User.Username()
-			password, _ := m.Ressource.User.Password()
-			elems := strings.Split(strings.TrimLeft(m.Ressource.Path, "/"), "/")
-			bucketname := elems[0]
-			prefix := "/"
-			if len(elems) > 1 {
-				prefix += path.Join(elems[1:]...)
-			}
-			region, err := regionByEndpoint(m.Ressource.Host)
+			bucket, prefix, err := splitS3URL(m.Ressource)
 			if err != nil {
 				log.Fatalf("Could not connect to S3: %s", err)
 			}
-			auth := aws.Auth{
-				AccessKey: username,
-				SecretKey: password,
-			}
-			s3acc := s3.New(auth, region)
 			h = &S3HTTP{
-				Bucket: s3acc.Bucket(bucketname),
+				Bucket: bucket,
 				Prefix: prefix,
 			}
 			h = katalysator.NewCache(options.CacheDuration, h)
@@ -94,6 +80,27 @@ func regionByEndpoint(endpoint string) (aws.Region, error) {
 		}
 	}
 	return aws.Region{}, fmt.Errorf("No region with endpoint %s", endpoint)
+}
+
+func splitS3URL(u *url.URL) (*s3.Bucket, string, error) {
+	username := u.User.Username()
+	password, _ := u.User.Password()
+	elems := strings.Split(strings.TrimLeft(u.Path, "/"), "/")
+	bucketname := elems[0]
+	prefix := "/"
+	if len(elems) > 1 {
+		prefix += path.Join(elems[1:]...)
+	}
+	region, err := regionByEndpoint(u.Host)
+	if err != nil {
+		return nil, "", err
+	}
+	auth := aws.Auth{
+		AccessKey: username,
+		SecretKey: password,
+	}
+	s3acc := s3.New(auth, region)
+	return s3acc.Bucket(bucketname), prefix, nil
 }
 
 type Map struct {
