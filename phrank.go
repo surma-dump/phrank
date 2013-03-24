@@ -1,144 +1,161 @@
 package main
 
 import (
-	"bufio"
-	"encoding/json"
-	"flag"
+	"fmt"
+	"io"
 	"log"
-	"net"
 	"net/http"
+	"net/url"
 	"os"
-	"os/signal"
-	"path/filepath"
+	"path"
 	"strings"
-	"syscall"
+	"time"
+
+	"launchpad.net/goamz/aws"
+	"launchpad.net/goamz/s3"
+
+	"github.com/voxelbrain/goptions"
+	"github.com/voxelbrain/katalysator"
+)
+
+const (
+	VERSION = "1.0.0"
 )
 
 var (
-	httpAddr  = flag.String("http", ":80", "Address to bind HTTP server to")
-	httpsAddr = flag.String("https", ":443", "Address to bind HTTP server to")
-	configDir = flag.String("config", "phrank.d", "Location of the config directory")
-	help      = flag.Bool("h", false, "Show this help")
+	options = struct {
+		Listen        string        `goptions:"-l, --listen, description='Address to bind webserver to'"`
+		CacheDuration time.Duration `goptions:"-c, --cache-duration, description='Duration to cache static content'"`
+		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a resource', obligatory"`
+		Help          goptions.Help `goptions:"-h, --help, description='Show this help'"`
+	}{
+		Listen: fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
+	}
 )
+
+func DefaultEnv(key, def string) string {
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+	return def
+}
 
 func main() {
-	flag.Parse()
+	goptions.ParseAndFail(&options)
 
-	if *help {
-		flag.PrintDefaults()
-		return
+	for _, m := range options.Maps {
+		h := m.Handler
+		if m.Cachable {
+			h = katalysator.NewCache(options.CacheDuration, m.Handler)
+		}
+		http.Handle(m.Path, http.StripPrefix(m.Path, h))
 	}
-
-	go func() {
-		c := make(chan os.Signal)
-		signal.Notify(c, syscall.SIGUSR1)
-		for _ = range c {
-			readConfig()
-		}
-	}()
-	readConfig()
-
-	log.Printf("Binding HTTPS to %s", *httpsAddr)
-	go func() {
-		e := http.ListenAndServeTLS(*httpsAddr, *configDir+"/cert.pem", *configDir+"/key.pem", http.HandlerFunc(appHandler))
-		if e != nil {
-			log.Printf("Could not bind HTTPS server: %s", e)
-		}
-	}()
-
-	log.Printf("Binding HTTP to %s", *httpAddr)
-	e := http.ListenAndServe(*httpAddr, http.HandlerFunc(appHandler))
-	if e != nil {
-		log.Fatalf("Could not bind HTTP server: %s", e)
+	log.Printf("Starting webserver on %s...", options.Listen)
+	err := http.ListenAndServe(options.Listen, nil)
+	if err != nil {
+		log.Fatalf("Could not start webserver: %s", err)
 	}
 }
 
-var (
-	backends = map[string]Backend{}
-)
-
-type Backend struct {
-	Domain           string
-	AddForwardHeader bool
-	Address          string
+func regionByEndpoint(endpoint string) (aws.Region, error) {
+	for _, region := range aws.Regions {
+		epURL, _ := url.Parse(region.S3Endpoint)
+		if epURL.Host == endpoint {
+			return region, nil
+		}
+	}
+	return aws.Region{}, fmt.Errorf("No region with endpoint %s", endpoint)
 }
 
-func readConfig() {
-	log.Printf("Reading configuration files...")
-	newBackends := map[string]Backend{}
-	root := *configDir + "/apps"
-	filepath.Walk(root, func(path string, info os.FileInfo, e error) error {
-		if e != nil {
-			log.Printf("Error: %s: %s", path, e)
-			return nil
-		}
-		if info.IsDir() && path != root {
-			return filepath.SkipDir
-		}
-		if !strings.HasSuffix(path, ".app") {
-			return nil
-		}
-		log.Printf("Reading %s...", path)
-		f, e := os.Open(path)
-		if e != nil {
-			log.Printf("Could not open file %s: %s", path, e)
-			return nil
-		}
-		defer f.Close()
-
-		var b Backend
-		dec := json.NewDecoder(f)
-		if e := dec.Decode(&b); e != nil {
-			log.Printf("Could not parse file %s: %s", path, e)
-			return nil
-		}
-		newBackends[strings.ToLower(b.Domain)] = b
-		return nil
-	})
-	backends = newBackends
-	log.Printf("Done.")
+func splitS3URL(u *url.URL) (*s3.Bucket, string, error) {
+	username := u.User.Username()
+	password, _ := u.User.Password()
+	elems := strings.Split(strings.TrimLeft(u.Path, "/"), "/")
+	bucketname := elems[0]
+	prefix := "/"
+	if len(elems) > 1 {
+		prefix += path.Join(elems[1:]...)
+	}
+	region, err := regionByEndpoint(u.Host)
+	if err != nil {
+		return nil, "", err
+	}
+	auth := aws.Auth{
+		AccessKey: username,
+		SecretKey: password,
+	}
+	s3acc := s3.New(auth, region)
+	return s3acc.Bucket(bucketname), prefix, nil
 }
 
-func appHandler(w http.ResponseWriter, r *http.Request) {
-	backend, ok := backends[strings.ToLower(r.Host)]
-	if !ok {
-		http.Error(w, "Invalid domain", 404)
+type Map struct {
+	Path     string
+	Handler  http.Handler
+	Cachable bool
+}
+
+func (m *Map) MarshalGoption(v string) error {
+	maps := strings.Split(v, "=>")
+	if len(maps) != 2 {
+		return fmt.Errorf("Invalid mapping")
+	}
+
+	path := strings.TrimSpace(maps[0])
+	resource, err := url.Parse(strings.TrimSpace(maps[1]))
+	if err != nil {
+		return fmt.Errorf("Invalid URI: %s", err)
+	}
+
+	m.Path = path
+	if !strings.HasSuffix(m.Path, "/") {
+		m.Path += "/"
+	}
+
+	switch resource.Scheme {
+	case "http", "https":
+		m.Cachable = false
+		m.Handler = katalysator.NewSingleHostReverseProxy(resource)
+	case "file":
+		m.Cachable = true
+		m.Handler = http.FileServer(http.Dir(resource.Path))
+	case "s3":
+		m.Cachable = true
+		bucket, prefix, err := splitS3URL(resource)
+		if err != nil {
+			return fmt.Errorf("S3-related error: %s", err)
+		}
+		m.Handler = &S3HTTP{
+			Bucket: bucket,
+			Prefix: prefix,
+		}
+	default:
+		return fmt.Errorf("Unsupported scheme: %s", resource.Scheme)
+	}
+	return nil
+}
+
+type S3HTTP struct {
+	Bucket *s3.Bucket
+	Prefix string
+}
+
+func (s *S3HTTP) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	key := path.Join(s.Prefix, r.URL.Path)[1:]
+	resp, err := s.Bucket.List(key, "", "", 2)
+	if err != nil {
+		log.Printf("Could not list bucket %s: %s", s.Bucket.Name, err)
+		http.NotFound(w, r)
+		return
+	}
+	if len(resp.Contents) != 1 {
+		http.NotFound(w, r)
 		return
 	}
 
-	backendaddr, e := net.ResolveTCPAddr("tcp4", backend.Address)
-	if e != nil {
-		http.Error(w, "Could not resolve backend address", 500)
-		return
-	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", resp.Contents[0].Size))
+	w.Header().Set("ETag", resp.Contents[0].ETag)
+	f, _ := s.Bucket.GetReader(key)
+	defer f.Close()
 
-	ccon, _, e := w.(http.Hijacker).Hijack()
-	if e != nil {
-		http.Error(w, "Hijacking failed", 500)
-		return
-	}
-	defer ccon.Close()
-
-	bcon, e := net.DialTCP("tcp4", nil, backendaddr)
-	if e != nil {
-		log.Printf("Backend not reachable: %s", e)
-		return
-	}
-	defer bcon.Close()
-
-	// Add X-Forwared-For header and send request
-	if backend.AddForwardHeader {
-		r.Header.Add("X-Forwarded-For", r.RemoteAddr)
-	}
-	r.Write(bcon)
-
-	// Avoid floating keep-alive connection by letting the http package
-	// parse the response. It closes the connection once everything has been
-	// received.
-	resp, e := http.ReadResponse(bufio.NewReader(bcon), r)
-	if e != nil {
-		log.Printf("Invalid response: %s", e)
-		return
-	}
-	resp.Write(ccon)
+	io.Copy(w, f)
 }
