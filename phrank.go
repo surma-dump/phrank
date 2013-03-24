@@ -22,7 +22,7 @@ var (
 	options = struct {
 		Listen        string        `goptions:"-l, --listen, description='Address to bind webserver to'"`
 		CacheDuration time.Duration `goptions:"-c, --cache-duration, description='Duration to cache static content'"`
-		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a ressource', obligatory"`
+		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a resource', obligatory"`
 		Help          goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	}{
 		Listen: fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
@@ -40,28 +40,9 @@ func main() {
 	goptions.ParseAndFail(&options)
 
 	for _, m := range options.Maps {
-		if !strings.HasSuffix(m.Path, "/") {
-			m.Path += "/"
-		}
-		var h http.Handler
-		switch m.Ressource.Scheme {
-		case "http", "https":
-			h = katalysator.NewSingleHostReverseProxy(m.Ressource)
-		case "file":
-			h = http.FileServer(http.Dir(m.Ressource.Path))
-			h = katalysator.NewCache(options.CacheDuration, h)
-		case "s3":
-			bucket, prefix, err := splitS3URL(m.Ressource)
-			if err != nil {
-				log.Fatalf("Could not connect to S3: %s", err)
-			}
-			h = &S3HTTP{
-				Bucket: bucket,
-				Prefix: prefix,
-			}
-			h = katalysator.NewCache(options.CacheDuration, h)
-		default:
-			log.Fatalf("Unknown scheme: %s", m.Ressource.Scheme)
+		h := m.Handler
+		if m.Cachable {
+			h = katalysator.NewCache(options.CacheDuration, m.Handler)
 		}
 		http.Handle(m.Path, http.StripPrefix(m.Path, h))
 	}
@@ -104,8 +85,9 @@ func splitS3URL(u *url.URL) (*s3.Bucket, string, error) {
 }
 
 type Map struct {
-	Path      string
-	Ressource *url.URL
+	Path     string
+	Handler  http.Handler
+	Cachable bool
 }
 
 func (m *Map) MarshalGoption(v string) error {
@@ -115,13 +97,36 @@ func (m *Map) MarshalGoption(v string) error {
 	}
 
 	path := strings.TrimSpace(maps[0])
-	rsrc, err := url.Parse(strings.TrimSpace(maps[1]))
+	resource, err := url.Parse(strings.TrimSpace(maps[1]))
 	if err != nil {
 		return fmt.Errorf("Invalid URI: %s", err)
 	}
 
 	m.Path = path
-	m.Ressource = rsrc
+	if !strings.HasSuffix(m.Path, "/") {
+		m.Path += "/"
+	}
+
+	switch resource.Scheme {
+	case "http", "https":
+		m.Cachable = false
+		m.Handler = katalysator.NewSingleHostReverseProxy(resource)
+	case "file":
+		m.Cachable = true
+		m.Handler = http.FileServer(http.Dir(resource.Path))
+	case "s3":
+		m.Cachable = true
+		bucket, prefix, err := splitS3URL(resource)
+		if err != nil {
+			return fmt.Errorf("S3-related error: %s", err)
+		}
+		m.Handler = &S3HTTP{
+			Bucket: bucket,
+			Prefix: prefix,
+		}
+	default:
+		return fmt.Errorf("Unsupported scheme: %s", resource.Scheme)
+	}
 	return nil
 }
 
