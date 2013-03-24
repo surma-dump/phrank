@@ -1,27 +1,36 @@
-`phrank` is a reverse proxy with SSL termination.
+`phrank` is a generic reverse proxy born out of the desire to build
+pure client-side apps accessing third party APIs. It is designed to be
+easily cloud-deployable.
 
 # Configuration
+All configuration is done using command line flags.
 
-## Apps
+## Ressources
+Ressources can be:
 
-For every backend, app or whatever you want to call it, there needs to be a config file in `phrank.d` like this:
+* Another HTTP URL (e.g. `http(s)://<Domain>`)
+* A [S3][3] Bucket (e.g. `s3://<Key>:<Secret>@<S3 Endpoint>/<Bucket>/<prefix>`)
+* Local, static content (e.g. `file://<path>`)
 
-	{
-		"Domain": "app.domain.com",
-		"AddForwardHeader": false,
-		"Address": "localhost:9001"
-	}
+To define a map, just specifiy a `--map` flag for each ressource that you use:
 
-Requests made to `phrank` with the `Host` header set to `Domain` are forwarded to `Address`. If the `AddForwardHeader` field is true, an additional header `X-Forwarded-For` will be injected into the request to the backend containing the address of the original client.
+	$ phrank --map "/images => s3://key:secret@s3.amazonaws.com/mymediabucket/images" \
+	         --map "/ => file://./static"
 
-Config file names have to end in `.app`.
+## Caching
+The caching parameters specifies the duration for which static content is kept in
+memory to avoid unnecessary requests.
 
-## SSL
+Only S3 and local content is cached.
 
-Right now the SSL key and certificate are assumed to be in the configuration directory (usually `phrank.d`) and to be called `key.pem` and `cert.pem`. If one of them is not found, no HTTPS server is started.
+# Usage & Deployment
+The usual use-case is to fork this repository and deploy it to [Heroku][1],
+[dotCloud][2] or any other PaaS that supports Go.
 
-## Reloading
+You can either add your static content to the repository and define a `file` map
+or put it in a [S3][3] bucket and pick a rather large caching time.
 
-`phrank` can be forced to reread all configurations (not the certificates, though) by sending it the `SIGUSR1` signal:
+[1]: http://heroku.com
+[2]: http://dotcloud.com
+[3]: http://aws.amazon.com/s3
 
-	killall -USR1 phrank
