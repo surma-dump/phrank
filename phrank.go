@@ -18,6 +18,10 @@ import (
 	"github.com/voxelbrain/katalysator"
 )
 
+const (
+	VERSION = "1.0.0"
+)
+
 var (
 	options = struct {
 		Listen        string        `goptions:"-l, --listen, description='Address to bind webserver to'"`
