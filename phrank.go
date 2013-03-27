@@ -15,7 +15,7 @@ import (
 	"launchpad.net/goamz/s3"
 
 	"github.com/voxelbrain/goptions"
-	"github.com/voxelbrain/katalysator"
+	"github.com/voxelbrain/k"
 )
 
 const (
@@ -46,7 +46,7 @@ func main() {
 	for _, m := range options.Maps {
 		h := m.Handler
 		if m.Cachable {
-			h = katalysator.NewCache(options.CacheDuration, m.Handler)
+			h = k.NewCache(options.CacheDuration, m.Handler)
 		}
 		http.Handle(m.Path, http.StripPrefix(m.Path, h))
 	}
@@ -114,7 +114,7 @@ func (m *Map) MarshalGoption(v string) error {
 	switch resource.Scheme {
 	case "http", "https":
 		m.Cachable = false
-		m.Handler = katalysator.NewSingleHostReverseProxy(resource)
+		m.Handler = k.NewSingleHostReverseProxy(resource)
 	case "file":
 		m.Cachable = true
 		m.Handler = http.FileServer(http.Dir(resource.Path))
