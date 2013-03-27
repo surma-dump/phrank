@@ -29,16 +29,9 @@ var (
 		Maps          []*Map        `goptions:"-m, --map, description='Map a path to a resource', obligatory"`
 		Help          goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	}{
-		Listen: fmt.Sprintf(":%s", DefaultEnv("PORT", "8080")),
+		Listen: fmt.Sprintf(":%s", k.DefaultEnv("PORT", "8080")),
 	}
 )
-
-func DefaultEnv(key, def string) string {
-	if val := os.Getenv(key); val != "" {
-		return val
-	}
-	return def
-}
 
 func main() {
 	goptions.ParseAndFail(&options)
