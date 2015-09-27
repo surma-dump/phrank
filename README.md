@@ -31,4 +31,4 @@ Examples will follow...
 [2]: http://dotcloud.com
 [3]: http://aws.amazon.com/s3
 ---
-Version 1.0.1
+Version 2.0.0
